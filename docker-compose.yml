@@ -1,0 +1,164 @@
+services:
+
+  # ════════════════════════════════════════════════
+  # BASES DE DATOS
+  # ════════════════════════════════════════════════
+
+  postgres-auth:
+    image: postgres:16
+    container_name: fintrack-postgres-auth
+    environment:
+      POSTGRES_DB: fintrack_auth
+      POSTGRES_USER: fintrack
+      POSTGRES_PASSWORD: fintrack123
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fintrack -d fintrack_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-accounts:
+    image: postgres:16
+    container_name: fintrack-postgres-accounts
+    environment:
+      POSTGRES_DB: fintrack_accounts
+      POSTGRES_USER: fintrack
+      POSTGRES_PASSWORD: fintrack123
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fintrack -d fintrack_accounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-transactions:
+    image: postgres:16
+    container_name: fintrack-postgres-transactions
+    environment:
+      POSTGRES_DB: fintrack_transactions
+      POSTGRES_USER: fintrack
+      POSTGRES_PASSWORD: fintrack123
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fintrack -d fintrack_transactions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ════════════════════════════════════════════════
+  # KAFKA
+  # ════════════════════════════════════════════════
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: fintrack-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "cub zk-ready localhost:2181 30 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: fintrack-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+    healthcheck:
+      test: ["CMD-SHELL", "cub kafka-ready -b localhost:9092 1 30 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
+
+  # ════════════════════════════════════════════════
+  # MICROSERVICIOS
+  # ════════════════════════════════════════════════
+
+  auth-service:
+    build:
+      context: ./auth_service
+      dockerfile: Dockerfile
+    container_name: fintrack-auth-service
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/fintrack_auth
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack123
+      SERVER_PORT: 8081
+
+  account-service:
+    build:
+      context: ./account_service
+      dockerfile: Dockerfile
+    container_name: fintrack-account-service
+    depends_on:
+      postgres-accounts:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-accounts:5432/fintrack_accounts
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack123
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: 8082
+
+  transaction-service:
+    build:
+      context: ./transaction_service
+      dockerfile: Dockerfile
+    container_name: fintrack-transaction-service
+    depends_on:
+      postgres-transactions:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-transactions:5432/fintrack_transactions
+      SPRING_DATASOURCE_USERNAME: fintrack
+      SPRING_DATASOURCE_PASSWORD: fintrack123
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: 8083
+
+  gateway-service:
+    build:
+      context: ./gateway_service
+      dockerfile: Dockerfile
+    container_name: fintrack-gateway-service
+    depends_on:
+      - auth-service
+      - account-service
+      - transaction-service
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: 8080
