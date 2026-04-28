@@ -58,7 +58,7 @@ Each microservice has its **own independent PostgreSQL database** — following 
 ### Run the entire system with one command
 
 ```bash
-git clone https://github.com/your-username/FinTrack.git
+git clone https://github.com/Jroogel11/FinTrack_Proyect.git
 cd FinTrack
 docker-compose up --build
 ```
